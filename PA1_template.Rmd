@@ -5,21 +5,166 @@ output:
     keep_md: true
 ---
 
+- set global options:
+```{r setoptions, echo=TRUE}
+library(knitr)
+opts_chunk$set(echo=TRUE, cache=F)
+```
 
 ## Loading and preprocessing the data
 
+- download the data from the webpage:
+```{r, download}
+# set the wd, in my case it is:
+setwd("~/Desktop/DataScience/ReproducibleResearch/project1/RepData_PeerAssessment1")
 
+# download data from the website if it is not loaded
+if(!file.exists("activity.zip")) {
+        file.Url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip"
+        download.file(file.Url, destfile="activity.zip", method="curl")
+}
+```
+
+- unzip and read the data
+```{r read and load}
+unzip("activity.zip")
+activity <- read.csv("activity.csv", stringsAsFactors=FALSE, na.strings="NA")
+```
+
+- transform the date to dateformat
+```{r transform}
+library(lubridate)
+activity$date <- parse_date_time(activity$date, "ymd")
+```
 
 ## What is mean total number of steps taken per day?
 
+- calculate the total number of steps taken per day ignoring missing data
+```{r }
+library(dplyr)
+# take the sum per day ignoring NA's
+sumactivity <- activity %>% filter(steps != is.na(steps)) %>% group_by(date) %>% summarise(number = n(), total_steps = sum(steps))
+```
 
+- make a histogram of the total number of steps taken each day
+```{r histogram}
+
+library(ggplot2)
+
+# plot a histogram
+total <- ggplot(sumactivity, aes(x=total_steps))
+plottotal <- total + geom_histogram(binwidth=1000, colour="black", aes(fill = ..count..)) + scale_fill_gradient("Count", low = "#CCCCCC", high = "#333333") + ggtitle("Histogram of total steps per day") + xlab(NULL)
+plottotal
+```
+
+- calculate and report mean and median ignoring missing values
+````{r mean and median}
+mean <- mean(sumactivity$total_steps, na.rm=TRUE)
+mean
+roundmean <- as.integer(mean)
+
+median <- median(sumactivity$total_steps, na.rm=TRUE)
+median
+```
 
 ## What is the average daily activity pattern?
 
+- make a time series plot (i.e. type = "l", the ggplot equivalent is geom_line()) of the 5 minute interval (x-axis) and the average number of steps taken, averaged across all days (y-axis)
+```{r time series1}
+activity$interval <- as.factor(activity$interval)
+sumactivity <- activity %>% filter(steps != is.na(steps)) %>% group_by(interval) %>% summarise(number = n(), steps = mean(steps))
 
+interval <- ggplot(sumactivity, aes(x=interval, y=steps, group=1))
+interval + geom_line(colour="blue") + scale_x_discrete(breaks= seq(0, 2000, by=1000)) + ylab("average number of steps") + ggtitle("Average of all steps of the 5 minute interval across all days")
+```
+
+- find the 5-minute interval that, on average, contains the maximum number of steps.
+````{r }
+
+maxinterval <- sumactivity %>% filter(steps == max(steps)) %>% select(interval)
+
+```
+The 5-minute interval that, on average, contains the maximum number of steps is `r maxinterval`
 
 ## Imputing missing values
 
+- calculate and report the total number of missing values in the dataset
+```{r missing data}
+missing_values <- nrow(activity[is.na(activity$steps),])
+````
+The total number of missing values is `r missing_values`.
+
+
+### Strategy for including missing values
+- split the data into to groups one without missing values and one with missing values
+```{r filling missing data}
+
+avaliable <- filter(activity, !is.na(steps))
+missing <- filter(activity, is.na(steps))
+```
+
+- fill the missing values with a random value from the set without missing values matching the same interval
+```{r filling missing data2}
+set.seed(100) # always set the seed for reproducibility
+for(i in 1:nrow(missing)){
+        missing$steps[i] <- sample(avaliable$steps[avaliable$interval == missing$interval[i]],1)
+}
+```
+
+- merge the two data sets together
+```{r }
+newdata <- data.frame(rbind(avaliable,missing))
+```
+
+- order them by date and interval to get the original order back
+```{r }
+newdata <- arrange(newdata, date, interval)
+```
+
+- calculate the total number of steps taken per day
+```{r }
+summissing <- newdata  %>% group_by(date) %>% summarise(number = n(), total_steps = sum(steps))
+```
+
+- make a histogram of the total number of steps taken each day 
+```{r Histogram of total steps per date with the missing data filled in}
+totalmissing <- ggplot(summissing, aes(x=total_steps))
+plotmissing <- totalmissing + geom_histogram(binwidth=1000, colour="black", aes(fill = ..count..)) + scale_fill_gradient("Count", low = "#CCCCCC", high = "#333333") + ggtitle("Histogram of total steps per day with the missing data filled in") + xlab(NULL)
+plotmissing
+```
+
+- calculate and report the mean and median total number of steps taken per day
+```{r }
+mean_missing <- mean(summissing$total_steps)
+mean_missing
+roundmean_missing <- as.integer(mean_missing)
+median_missing <- median(summissing$total_steps)
+median_missing
+```
+The mean including the missing values is with `r roundmean_missing`  smaller than the mean without missing values, which is `r roundmean`
+The median including the missing values ist `r median_missing`. and doesn't change much compared to the median without the missing values, which is `r median`.
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+- create a new factor variable in the dataset with two levels(“weekday” and “weekend”) indicating whether a given date is a weekday or weekend day.
+```{r }
+library(lubridate)
+newdata <- newdata %>% mutate(daysofweek = wday(date)) %>% mutate(days = ifelse(daysofweek > 1 & daysofweek < 7, "weekday", "weekend"))
+
+# convert it to a factor variable
+newdata$days <- factor(newdata$days)
+```
+
+- make a panel plot containing a time series plot (i.e. type = "l", the ggplot2 equivalent is geom_line()) of the 5-minute interval (x-axis) and the average number of steps taken, averaged across all weekday days or weekend days (y-axis).
+
+```{r times series2}
+sumnewdata <- newdata %>% group_by(interval,days) %>% summarise(average_steps = mean(steps))
+
+# reorder the levels
+sumnewdata$days <- relevel(sumnewdata$days, ref = "weekend")
+
+timeseries <- ggplot(sumnewdata, aes(y=average_steps, x=interval, group=1))
+timeseries + geom_line(colour="blue") + facet_wrap(~days, ncol=1) + scale_x_discrete(breaks=c(0,500,1000,1500,2000)) + ylab("average number of steps") + ggtitle("Average of all steps of the 5 minute interval across all days")
+````
+
+During weekdays more steps are recorded in the earlier intervals and the average steps peaks higher, while on weekend more average steps are recorded in the later intervals.
